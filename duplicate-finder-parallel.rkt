@@ -3,24 +3,22 @@
 
 (provide main)
 
+(define (get-directories directory)
+  (for/list ([f (directory-list directory)]
+             #:when (directory-exists? 
+                     (string-append directory "/" (path->string f))))
+    (string-append directory "/" (path->string f))))
+
 (define (find-duplicates directory)
+  (printf "Starting directory: ~a~n" directory)
   (define file-hash (make-hash))
-  (define place-list empty)
   (for ([f (directory-list directory)])
     (define full-path (string-append directory "/" (path->string f)))
-    (if (directory-exists? full-path)
-        (let ([p (place ch
-                   (define directory (place-channel-get ch))
-                   (define file-hash (find-duplicates directory))
-                   (place-channel-put ch (hash->list file-hash)))])
-          (place-channel-put p full-path)
-          (set! place-list (cons p place-list)))
-        (add-or-append! file-hash
-                        (md5 (file->bytes full-path))
-                        (list full-path))))
-  (for ([p place-list])
-    (define assocs (place-channel-get p))
-    (combine-hash! file-hash assocs))
+    (unless (directory-exists? full-path)
+      (add-or-append! file-hash
+                      (md5 (file->bytes full-path))
+                      (list full-path))))
+  (printf "\tFinished directory: ~a~n" directory)
   file-hash)
 
 (define (print-duplicates file-hash)
@@ -39,16 +37,32 @@
 (define (combine-hash! h assocs)
   (for ([p assocs])
     (add-or-append! h (first p) (rest p))))
-        
+
+(define (make-worker-place)
+  (place ch
+    (define directory (place-channel-get ch))
+    (define directories (get-directories directory))
+    (place-channel-put ch directories)
+    (define file-hash (find-duplicates directory))
+    (place-channel-put ch (hash->list file-hash))))
 
 (define (main)
-  (define p
-    (place ch
-      (define directory (place-channel-get ch))
-      (define file-hash (find-duplicates directory))
-      (place-channel-put ch (hash->list file-hash))))
-  
-  ;(place-channel-put p "/Users/heather/Pictures/Nick's Pictures/random pics")
-  (place-channel-put p "/Users/heather/Pictures/Nick's Pictures/Nick's iPhoto Pictures")
-  
-  (print-duplicates (make-hash (place-channel-get p))))
+  (define file-hash (make-hash))
+  (define places
+    (let loop ([directories (list "/Users/heather/Pictures/Nick's Pictures")]
+               [places empty])
+      (define p (make-worker-place))
+      (place-channel-put p (first directories))
+      (define new-directories (append (rest directories) (place-channel-get p)))
+      (if (empty? new-directories)
+          (append places (list p))
+          (if (> (length places) (* 5 (processor-count)))
+              (begin
+                (printf "Waiting...~n")
+                (combine-hash! file-hash (place-channel-get (first places)))
+                (loop new-directories (append (rest places) (list p))))
+              (loop new-directories (append places (list p)))))))
+  (for ([p places])
+    (define assocs (place-channel-get p))
+    (combine-hash! file-hash assocs))
+  (print-duplicates file-hash))
