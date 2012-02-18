@@ -1,5 +1,5 @@
 #lang racket
-(require file/md5)
+(require openssl/sha1)
 
 (provide main)
 
@@ -9,6 +9,10 @@
                      (string-append directory "/" (path->string f))))
     (string-append directory "/" (path->string f))))
 
+(define (get-all-sub-directories directory)
+  (define directories (get-directories directory))
+  (append directories (append-map get-all-sub-directories directories)))
+
 (define (find-duplicates directory)
   (printf "Starting directory: ~a~n" directory)
   (define file-hash (make-hash))
@@ -16,7 +20,7 @@
     (define full-path (string-append directory "/" (path->string f)))
     (unless (directory-exists? full-path)
       (add-or-append! file-hash
-                      (md5 (file->bytes full-path))
+                      (call-with-input-file full-path sha1)
                       (list full-path))))
   (printf "\tFinished directory: ~a~n" directory)
   file-hash)
@@ -48,8 +52,12 @@
 
 (define (main)
   (define file-hash (make-hash))
+  (define directory "/Users/heather/Pictures/Nick's Pictures/random pics")
+  (define all-directories (get-all-sub-directories directory))
+  (define total (add1 (length all-directories)))
+  (define done 0)
   (define places
-    (let loop ([directories (list "/Users/heather/Pictures/Nick's Pictures")]
+    (let loop ([directories (list directory)]
                [places empty])
       (define p (make-worker-place))
       (place-channel-put p (first directories))
@@ -60,9 +68,13 @@
               (begin
                 (printf "Waiting...~n")
                 (combine-hash! file-hash (place-channel-get (first places)))
+                (set! done (add1 done))
+                (printf "~n~a% done~n" (real->decimal-string (* 100. (/ done total))))
                 (loop new-directories (append (rest places) (list p))))
               (loop new-directories (append places (list p)))))))
   (for ([p places])
     (define assocs (place-channel-get p))
-    (combine-hash! file-hash assocs))
+    (combine-hash! file-hash assocs)
+    (set! done (add1 done))
+    (printf "~n~a% done~n" (real->decimal-string (* 100. (/ done total)))))
   (print-duplicates file-hash))
